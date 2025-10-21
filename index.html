@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>MBC 기재실 휴가 종합</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js" crossorigin>
+  <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js" crossorigin>
+  
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+  
+  <style>
+    /* [DESIGN] 2. 새로운 컬러 팔레트 및 디자인 변수 정의 */
+    :root{
+      --primary-blue:#007BFF;
+      --primary-dark:#0056b3;
+      --primary-light:#F0F7FF;
+      --gradient-start:#007BFF;
+      --gradient-end:#00A6ED;
+      --ink:#212529;
+      --ink-light:#495057;
+      --line:#E9ECEF;
+      --bg:#F8F9FA;
+      --panel:#FFFFFF;
+      --radius:16px; /* 더 부드러운 곡률 */
+      --red:#ef4444;
+      --orange:#f59e0b;
+    }
+    *{box-sizing:border-box}
+    
+    /* [DESIGN] 1. 기본 폰트 및 배경색 변경 */
+    body{
+      margin:0;
+      background:var(--bg);
+      color:var(--ink);
+      font-family:'Pretendard',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+    }
+    
+    /* [DESIGN] 2. 타이틀에 그라데이션 텍스트 적용 */
+    .title{
+      font-weight:800;
+      letter-spacing:-.5px;
+      background:linear-gradient(45deg, var(--gradient-start), var(--gradient-end));
+      -webkit-background-clip:text;
+      background-clip:text;
+      color:transparent;
+    }
+    
+    /* [DESIGN] 3. 카드 UI: 부드러운 그림자와 곡률 적용 */
+    .card{
+      background:var(--panel);
+      border:1px solid var(--line);
+      border-radius:var(--radius);
+      box-shadow:0 6px 24px rgba(0, 86, 179, 0.08);
+      transition:all .3s ease;
+    }
+    
+    /* [DESIGN] 3. 입력창 UI: 모던한 포커스 효과 */
+    .input{
+      width:100%;
+      padding:12px 16px;
+      border:1px solid var(--line);
+      border-radius:12px;
+      background:var(--panel);
+      color:var(--ink);
+      outline:none;
+      transition:.2s;
+    }
+    .input:focus{
+      border-color:var(--primary-blue);
+      box-shadow:0 0 0 4px rgba(0, 123, 255, 0.15);
+    }
+    
+    /* [DESIGN] 3. 버튼 UI: 그라데이션 및 입체적인 호버 효과 */
+    .btn{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      border-radius:14px;
+      padding:14px 24px;
+      font-weight:700;
+      letter-spacing:0;
+      color:#fff;
+      background:linear-gradient(45deg, var(--gradient-start), var(--gradient-end));
+      box-shadow:0 4px 12px rgba(0, 123, 255, 0.25);
+      transition:transform .2s, box-shadow .2s;
+      border:none;
+    }
+    .btn:hover{
+      transform:scale(1.03);
+      box-shadow:0 8px 20px rgba(0, 123, 255, 0.35);
+    }
+    
+    /* [DESIGN] 3. 보조 버튼 UI */
+    .btn-ghost{
+      background:var(--primary-light);
+      color:var(--primary-dark);
+      border:1px solid #BDE0FF;
+      font-weight:700;
+      transition:background .2s, transform .2s;
+      padding: 12px 22px;
+    }
+    .btn-ghost:hover{
+      background:#E0EFFF;
+      transform:scale(1.02);
+      box-shadow:none;
+      filter:none;
+    }
+    .btn-nonwrap{min-width:84px;white-space:nowrap}
+    
+    /* [DESIGN] 3. 캘린더 UI: 부드러운 호버 효과 */
+    .calendar-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}
+    .calendar-day{
+      min-height:128px;
+      border:1px solid var(--line);
+      border-radius:12px;
+      background:var(--panel);
+      padding:12px;
+      display:flex;
+      flex-direction:column;
+      transition:transform .2s, box-shadow .2s, border-color .2s;
+    }
+    .calendar-day:hover{
+      background:var(--primary-light);
+      border-color:var(--primary-blue);
+      box-shadow:0 4px 12px rgba(0, 86, 179, 0.1);
+      transform:scale(1.02);
+      z-index:10;
+      position:relative; /* z-index 적용을 위해 */
+      cursor:pointer;
+    }
+    .day-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+    .day-num{font-weight:700;color:var(--ink-light);font-size:14px}
+    .names-wrap{display:flex;flex-wrap:wrap;gap:4px;margin-top:auto;max-height:96px;overflow:auto;padding-top:2px}
+    .names-wrap::-webkit-scrollbar{height:6px;width:6px}.names-wrap::-webkit-scrollbar-thumb{background:#d1d5db;border-radius:999px}
+    
+    /* [DESIGN] 3. 캘린더 비활성 날짜 */
+    .other-month{color:#c4c8cf;background:#fafafa}
+    .other-month:hover{
+      background:#fafafa;
+      box-shadow:none;
+      border-color:var(--line);
+      cursor:not-allowed;
+      transform:none;
+      z-index:0;
+    }
+    
+    /* [DESIGN] 3. 칩 UI: 상태 표시 */
+    .chip{
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      border-radius:8px; /* 둥근 사각형으로 변경 */
+      padding:4px 8px;
+      font-size:11px;
+      font-weight:600;
+      white-space:nowrap;
+      max-width:100%;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      border:1px solid;
+      background:#fff;
+    }
+    .chip-dot{width:7px;height:7px;border-radius:50%}
+    
+    /* 칩 색상 (기존 유지, 가독성 좋음) */
+    .chip-blue{border-color:#b3d7ff;color:#0056b3;background:#e6f2ff}.chip-blue .chip-dot{background:var(--primary-blue)}
+    .chip-orange{border-color:#fde1b0;color:#9a3412;background:#fff7ed}.chip-orange .chip-dot{background:var(--orange)}
+	.chip-red{border-color:#fecaca;color:#991b1b;background:#fef2f2}.chip-red .chip-dot{background:var(--red)}
+    .chip-more{border-color:#e5e7eb;color:#374151;background:#f3f4f6}
+    
+    /* 상태 텍스트 색상 (기존 유지) */
+    .status-pending{color:#d97706;font-weight:800}.status-approved{color:#0ea5e9;font-weight:800}.status-rejected{color:#ef4444;font-weight:800}
+    
+    /* 토스트 팝업 */
+    .toast{
+      position:fixed;
+      right:20px;
+      top:20px;
+      z-index:1000;
+      min-width:220px;
+      background:linear-gradient(45deg, #343A40, #111827);
+      color:#fff;
+      padding:14px 18px;
+      border-radius:12px;
+      box-shadow:0 10px 26px rgba(0,0,0,.15);
+      opacity:0;
+      transform:translateY(-10px);
+      transition:.25s;
+    }
+    .toast.show{opacity:1;transform:translateY(0)}
+    
+    /* 인라인 배너 */
+    .inline-banner{display:none;margin-bottom:10px;background:#e8f6fd;border:1px solid #ccecff;color:#065f8e;padding:10px 14px;border-radius:10px;font-weight:700}
+    .inline-banner.show{display:block}
+    
+    /* [DESIGN] 4. 모바일 최적화 (640px 기준으로 변경) */
+    @media (max-width:640px){
+      body{overflow-x:hidden;}
+      .container{padding-left:12px; padding-right:12px;}
+      .card{padding:16px;}
+      .btn{padding:14px 18px;font-size:15px;}
+      .title{font-size:28px!important}
+      
+      .calendar-grid{gap:4px}
+      .calendar-day{min-height:74px;padding:6px;border-radius:10px}
+      .day-num{font-size:11px}
+      .names-wrap{gap:2px;max-height:44px}
+      .chip{padding:1px 5px;font-size:9px;transform:scale(.98); gap: 3px; border-radius: 6px;}
+      .chip .chip-dot{width:5px;height:5px}
+    }
+  </style>
+</head>
+<body>
+  <div id="toast" class="toast">변경이 완료 되었습니다.</div>
+
+  <div class="container mx-auto p-4 max-w-7xl overflow-hidden">
+    <header class="text-center my-6 md:my-10 px-0">
+      <h1 id="home-link" class="title text-3xl md:text-4xl cursor-pointer">MBC 기재실 휴가 종합</h1>
+    </header>
+
+    <main>
+      <section id="home-screen" class="flex flex-col items-center justify-center min-h-[60vh]">
+        <div class="flex flex-col md:flex-row gap-5">
+          <button id="go-to-admin" class="btn text-xl px-10 py-6 w-72 h-20">관리자 페이지</button>
+          <button id="go-to-user"  class="btn text-xl px-10 py-6 w-72 h-20">사용자 페이지</button>
+        </div>
+      </section>
+
+      <div id="admin-login-popup" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+        <div class="card p-6 md:p-8 w-full max-w-sm">
+          <h2 class="text-2xl font-extrabold mb-5 text-center">관리자 로그인</h2>
+          <form id="admin-login-form" class="space-y-4">
+            <input id="admin-id" class="input" placeholder="아이디" required>
+            <input id="admin-pw" type="password" class="input" placeholder="비밀번호" required>
+            <button type="submit" class="btn w-full !mt-5">로그인</button>
+            <button type="button" id="admin-login-close" class="btn-ghost w-full py-3 rounded-xl">닫기</button>
+          </form>
+        </div>
+      </div>
+
+      <section id="admin-screen" class="hidden">
+        <div class="grid grid-cols-1 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          <div class="lg:col-span-2 xl:col-span-3 card p-4 md:p-6">
+            <div class="flex items-center justify-between mb-4">
+              <button id="admin-prev-month" class="btn-ghost px-4 py-2 rounded-xl text-lg">&lt;</button>
+              <h2 id="admin-calendar-title" class="text-xl md:text-2xl font-extrabold"></h2>
+              <button id="admin-next-month" class="btn-ghost px-4 py-2 rounded-xl text-lg">&gt;</button>
+            </div>
+            <div class="calendar-grid text-center font-bold text-gray-500 border-b border-gray-200 pb-2 mb-3">
+              <div>일</div><div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div>토</div>
+            </div>
+            <div id="admin-calendar" class="calendar-grid"></div>
+          </div>
+
+          <div class="space-y-6 lg:col-span-1 xl:col-span-1">
+            <div class="card p-6">
+              <h3 class="font-extrabold text-lg pb-3 border-b border-gray-200 mb-4">사용자 관리</h3>
+              <form id="add-user-form" class="flex gap-2">
+                <input id="new-user-name" class="input flex-grow" placeholder="사용자 이름" required>
+                <button class="btn btn-nonwrap">추가</button>
+              </form>
+              <div id="user-list" class="max-h-72 overflow-y-auto mt-4 divide-y divide-gray-100"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="user-login-screen" class="hidden flex items-center justify-center min-h-[60vh]">
+        <div class="card p-6 md:p-8 w-full max-w-sm">
+          <h2 class="text-2xl font-extrabold mb-5 text-center">사용자 로그인</h2>
+          <form id="user-login-form" class="space-y-4">
+            <input id="user-name" class="input" placeholder="이름" required>
+            <input id="user-pw" type="password" class="input" placeholder="비밀번호" required>
+            <button type="submit" class="btn w-full !mt-5">로그인</button>
+          </form>
+        </div>
+      </section>
+
+      <section id="password-change-screen" class="hidden flex items-center justify-center min-h-[60vh]">
+        <div class="card p-6 md:p-8 w-full max-w-sm">
+          <h2 class="text-2xl font-extrabold mb-2 text-center">최초 비밀번호 변경</h2>
+          <p class="text-center text-gray-600 mb-5">보안을 위해 새로운 비밀번호를 설정해주세요.</p>
+          <form id="password-change-form" class="space-y-4">
+            <input id="new-pw" type="password" class="input" placeholder="새 비밀번호 (4자 이상)" required>
+            <input id="confirm-new-pw" type="password" class="input" placeholder="새 비밀번호 확인" required>
+            <button type="submit" class="btn w-full !mt-5">변경 완료</button>
+          </form>
+        </div>
+      </section>
+
+      <section id="user-screen" class="hidden">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div class="md:col-span-2 card p-4 md:p-6">
+            <div class="flex justify-between items-center mb-4">
+              <h2 id="user-calendar-title" class="text-xl md:text-2xl font-extrabold"></h2>
+              </div>
+            <div class="calendar-grid text-center font-bold text-gray-500 border-b border-gray-200 pb-2 mb-3">
+              <div>일</div><div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div>토</div>
+            </div>
+            <div id="user-calendar" class="calendar-grid"></div>
+          </div>
+
+          <div class="card p-4 md:p-6">
+            <h3 class="font-extrabold text-lg pb-3 border-b border-gray-200 mb-4">신청 현황</h3>
+            <div id="my-requests" class="max-h-96 overflow-y-auto space-y-3 mt-3"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="applicant-list-popup" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+    <div class="card p-6 w-full max-w-lg">
+      <div class="flex justify-between items-center mb-4 border-b border-gray-200 pb-3">
+        <h2 id="applicant-list-title" class="text-xl font-extrabold"></h2>
+        <button id="applicant-list-close" class="text-3xl leading-none text-gray-400 hover:text-gray-700 transition">&times;</button>
+      </div>
+      <div id="applicant-inline-feedback" class="inline-banner">처리되었습니다.</div>
+      <div id="applicant-list-content" class="max-h-[60vh] overflow-y-auto"></div>
+    </div>
+  </div>
+
+  <div id="request-modal" class="hidden fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+    <div class="card p-6 w-full max-w-sm">
+      <h2 class="text-xl font-extrabold mb-4">휴가 신청</h2>
+      <div class="space-y-4">
+        <div class="text-gray-700">선택한 날짜: <span id="request-date-label" class="font-bold text-lg text-black"></span></div>
+        <select id="request-reason-select" class="input">
+          <option>개인 사유</option>
+          <option>예비군</option>
+          <option>본인 생일</option>
+          <option>가족 행사</option>
+        </select>
+        <div class="flex gap-2 justify-end pt-2">
+          <button id="request-cancel" class="btn-ghost px-4 py-2 rounded-xl">취소</button>
+          <button id="request-submit" class="btn px-4 py-2">신청</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import {
+      getFirestore, collection, addDoc, getDocs, onSnapshot, doc, updateDoc, deleteDoc,
+      query, where, serverTimestamp, orderBy, enableIndexedDbPersistence, waitForPendingWrites
+    } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey:"AIzaSyACkd1QzPgDnmRz3b206e4IiePiS55keio",
+      authDomain:"mbc-ingest.firebaseapp.com",
+      databaseURL:"https://mbc-ingest-default-rtdb.firebaseio.com",
+      projectId:"mbc-ingest",
+      storageBucket:"mbc-ingest.firebasestorage.app",
+      messagingSenderId:"700019516",
+      appId:"1:700019516:web:09f8b929973059316ea439"
+    };
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    enableIndexedDbPersistence(db).catch(()=>{});
+
+    let currentAdminDate=new Date();
+    let currentUser=null;
+    let users=[]; let vacationRequests=[]; let pendingDate=null;
+    let unsubUsers=null, unsubReqAll=null, unsubReqMine=null; let boundFor=null;
+
+    const scheduleRender=(()=>{let t=null;return(fn)=>{if(t)return;t=setTimeout(()=>{t=null;try{fn()}catch(e){console.error(e)}},120)}})();
+    const addLog=async(msg)=>{try{await addDoc(collection(db,'logs'),{message:msg,timestamp:serverTimestamp()})}catch(e){}};
+    const compactName=(n)=>{if(!n)return'';const m=3;return n.length>m?n.slice(0,m)+'…':n};
+    const toast=(m)=>{const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1600)};
+    const banner=(m)=>{const b=document.getElementById('applicant-inline-feedback');if(!b)return;b.textContent=m;b.classList.add('show');setTimeout(()=>b.classList.remove('show'),1400)};
+
+    const screens={home:document.getElementById('home-screen'),admin:document.getElementById('admin-screen'),userLogin:document.getElementById('user-login-screen'),passwordChange:document.getElementById('password-change-screen'),user:document.getElementById('user-screen')};
+    const popups={adminLogin:document.getElementById('admin-login-popup'),applicantList:document.getElementById('applicant-list-popup'),request:document.getElementById('request-modal')};
+    const showScreen=(n)=>{Object.values(screens).forEach(s=>s.classList.add('hidden'));screens[n]?.classList.remove('hidden')};
+    const showPopup=(n)=>popups[n]?.classList.remove('hidden');
+    const hidePopup=(n)=>popups[n]?.classList.add('hidden');
+
+    document.getElementById('home-link').addEventListener('click',()=>{currentUser=null;sessionStorage.removeItem('currentUser');showScreen('home')});
+    document.getElementById('go-to-admin').addEventListener('click',()=>showPopup('adminLogin'));
+    document.getElementById('go-to-user').addEventListener('click',()=>showScreen('userLogin'));
+    document.getElementById('admin-login-close').addEventListener('click',()=>hidePopup('adminLogin'));
+    document.getElementById('applicant-list-close').addEventListener('click',()=>hidePopup('applicantList'));
+    document.getElementById('applicant-list-popup').addEventListener('click',(e)=>{if(e.target.id==='applicant-list-popup')hidePopup('applicantList')});
+    document.getElementById('request-modal').addEventListener('click',(e)=>{if(e.target.id==='request-modal')hidePopup('request')});
+
+    const unbindAll=()=>{[unsubUsers,unsubReqAll,unsubReqMine].forEach(u=>{try{u&&u()}catch(e){}});unsubUsers=unsubReqAll=unsubReqMine=null;boundFor=null};
+
+    function bindAdminRequests() {
+      if (unsubReqAll) unsubReqAll(); 
+
+      const y = currentAdminDate.getFullYear(), m = currentAdminDate.getMonth();
+      const startDate = new Date(y, m, 1);
+      const endDate = new Date(y, m + 1, 0); 
+
+      const startDateStr = `${y}-${String(m + 1).padStart(2, '0')}-01`;
+      const endDateStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
+
+      const q = query(
+        collection(db, 'vacationRequests'),
+        where('date', '>=', startDateStr),
+        where('date', '<=', endDateStr)
+      );
+
+      unsubReqAll = onSnapshot(q, (snap) => {
+        vacationRequests = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        
+        scheduleRender(() => {
+          renderAdminCalendar(); 
+
+          const popup = popups.applicantList;
+          if (popup && !popup.classList.contains('hidden')) {
+            const titleEl = document.getElementById('applicant-list-title');
+            const dateStr = titleEl.textContent.split(' ')[0]; 
+            if (dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+              openApplicantList(dateStr); 
+            }
+          }
+        });
+      }, (error) => {
+        console.error("월별 데이터 수신 오류: ", error);
+        alert("데이터 로딩에 실패했습니다. Firestore 'date' 필드 인덱스가 필요할 수 있습니다 (콘솔 로그 확인).");
+      });
+    }
+    
+    const bindAdmin=()=>{if(boundFor==='admin')return;unbindAll();
+      unsubUsers=onSnapshot(collection(db,'users'),(snap)=>{users=snap.docs.map(d=>({id:d.id,...d.data()}));const list=document.getElementById('user-list');if(!list)return;list.innerHTML='';users.forEach(u=>{const row=document.createElement('div');row.className='flex items-center justify-between py-2.5';row.innerHTML=`<span class="text-gray-700">${u.name}</span><button data-id="${u.id}" data-name="${u.name}" class="text-red-500 text-xs font-semibold hover:underline delete-user-btn">삭제</button>`;list.appendChild(row)})});
+      
+      bindAdminRequests(); 
+      boundFor='admin'};
+
+    const bindUser=(uid)=>{if(boundFor==='user'&&unsubReqMine)return;unbindAll();
+      unsubReqMine=onSnapshot(query(collection(db,'vacationRequests'),where('userId','==',uid)),(snap)=>{vacationRequests=snap.docs.map(d=>({id:d.id,...d.data()}));scheduleRender(()=>{renderUserCalendar();renderMyRequests()})});boundFor='user'};
+
+    document.getElementById('admin-login-form').addEventListener('submit',(e)=>{e.preventDefault();const id=document.getElementById('admin-id').value.trim();const pw=document.getElementById('admin-pw').value;if(id==='admin'&&pw==='dlgmdfyd890!'){hidePopup('adminLogin');showScreen('admin');
+      renderAdminCalendar(); 
+      bindAdmin(); 
+    }else{alert('아이디 또는 비밀번호가 일치하지 않습니다.')}});
+
+    const sortKey=(r)=> Number(r.createdAtMs ?? r.clientTs ?? (r.timestamp&&r.timestamp.toMillis&&r.timestamp.toMillis()) ?? 0);
+
+    const renderAdminCalendar=()=>{const y=currentAdminDate.getFullYear(),m=currentAdminDate.getMonth();document.getElementById('admin-calendar-title').textContent=`${y}년 ${m+1}월`;const first=new Date(y,m,1).getDay();const last=new Date(y,m+1,0).getDate();const cont=document.getElementById('admin-calendar');cont.innerHTML='';for(let i=0;i<first;i++){const f=document.createElement('div');f.className='calendar-day other-month';cont.appendChild(f)}
+      for(let d=1;d<=last;d++){const ds=`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+        const dayReqs=vacationRequests.filter(r=>r.date===ds).sort((a,b)=>sortKey(a)-sortKey(b));
+        const cell=document.createElement('div');cell.className='calendar-day';
+        const head=document.createElement('div');head.className='day-head';head.innerHTML=`<span class="day-num">${d}</span><span></span>`;cell.appendChild(head);
+        if(dayReqs.length){const wrap=document.createElement('div');wrap.className='names-wrap';const maxShow=4;
+          dayReqs.slice(0,maxShow).forEach(req=>{if(req.status==='rejected')return;const chip=document.createElement('div');const cls=(req.status==='approved')?'chip-blue':'chip-orange';chip.className=`chip ${cls}`;chip.title=`${req.userName} (${req.reason})`;chip.innerHTML=`<span class="chip-dot"></span><span class="truncate">${compactName(req.userName)}</span>`;wrap.appendChild(chip)});
+          const shown=dayReqs.filter(r=>r.status!=='rejected').length;
+          if(shown>maxShow){const more=document.createElement('div');more.className='chip chip-more';more.textContent=`+${shown-maxShow}`;wrap.appendChild(more)}
+          if(wrap.children.length)cell.appendChild(wrap);cell.addEventListener('click',()=>openApplicantList(ds))}
+        cont.appendChild(cell)}};
+
+    document.getElementById('admin-prev-month').addEventListener('click',()=>{currentAdminDate.setMonth(currentAdminDate.getMonth()-1);renderAdminCalendar();bindAdminRequests()});
+    document.getElementById('admin-next-month').addEventListener('click',()=>{currentAdminDate.setMonth(currentAdminDate.getMonth()+1);renderAdminCalendar();bindAdminRequests()});
+
+    const openApplicantList=(dateStr)=>{document.getElementById('applicant-list-title').textContent=`${dateStr} 신청자 목록`;const box=document.getElementById('applicant-list-content');box.innerHTML='';
+      const reqs=vacationRequests.filter(r=>r.date===dateStr).sort((a,b)=>sortKey(a)-sortKey(b)); 
+      if(!reqs.length){box.innerHTML='<p class="text-gray-500 text-center py-4">신청자가 없습니다.</p>';showPopup('applicantList');return}
+      reqs.forEach(req=>{const stClass=req.status==='approved'?'status-approved':req.status==='rejected'?'status-rejected':'status-pending';const stText=req.status==='approved'?'승인':req.status==='rejected'?'반려':'대기';
+        const row=document.createElement('div');row.className='p-3 border border-gray-200 rounded-lg mb-2';
+        row.innerHTML=`<div class="flex flex-col gap-3">
+            <div class="flex items-center justify-between">
+              <p class="font-bold text-gray-800">${req.userName} <span class="text-sm font-normal text-gray-500">(${req.reason})</span></p>
+              <div class="flex items-center gap-3">
+                <p class="${stClass}">${stText}${req.status==='rejected'?` (${req.rejectionReason||''})`:''}</p>
+                ${req.status!=='pending'?`<button class="btn-ghost px-3 py-1.5 rounded-xl text-xs edit-btn" data-id="${req.id}">수정</button>`:''}
+              </div>
+            </div>
+            <div class="flex flex-wrap items-center gap-2 ${req.status==='pending'?'':'hidden'} edit-controls" data-id="${req.id}">
+              <button data-id="${req.id}" data-date="${req.date}" data-name="${req.userName}" class="btn px-3 py-2 text-sm approve-btn">승인</button>
+              <select class="input reject-reason w-[180px] text-sm !py-2" data-id="${req.id}">
+                <option value="">반려 사유 선택</option>
+                <option>부서 한도 초과</option>
+                <option>기타</option>
+              </select>
+              <button data-id="${req.id}" data-date="${req.date}" data-name="${req.userName}" class="btn-ghost px-3 py-2 rounded-xl text-sm reject-btn">반려</button>
+            </div>
+        </div>`;box.appendChild(row)});
+      showPopup('applicantList')};
+
+    document.getElementById('applicant-list-content').addEventListener('click',async(e)=>{
+      const t=e.target;const id=t.dataset.id,date=t.dataset.date,uname=t.dataset.name;
+      if(t.classList.contains('edit-btn')){const ctl=t.closest('.flex.flex-col').querySelector('.edit-controls');if(ctl)ctl.classList.remove('hidden');t.classList.add('hidden');return}
+      
+      if(t.classList.contains('approve-btn')){
+        try{
+          await updateDoc(doc(db,'vacationRequests',id),{status:'approved',rejectionReason:null});
+          await waitForPendingWrites(db);
+          await addLog(`관리자가 ${uname}님의 ${date} 휴가를 승인했습니다.`);
+          toast('승인되었습니다.'); banner('승인되었습니다.');
+        }catch(err){
+          alert('승인 실패: '+err.message)
+        }
+      }
+      if(t.classList.contains('reject-btn')){
+        const sel=t.parentElement.querySelector('.reject-reason');const reason=sel?.value||'';if(!reason){alert('반려 사유를 선택해주세요.');return}
+        try{
+          await updateDoc(doc(db,'vacationRequests',id),{status:'rejected',rejectionReason:reason});
+          await waitForPendingWrites(db);
+          await addLog(`관리자가 ${uname}님의 ${date} 휴가를 반려했습니다. (사유: ${reason})`);
+          toast('반려되었습니다.'); banner('반려되었습니다.');
+        }catch(err){
+          alert('반려 실패: '+err.message)
+        }
+      }
+    });
+
+    document.getElementById('add-user-form').addEventListener('submit',async(e)=>{e.preventDefault();const name=document.getElementById('new-user-name').value.trim();if(!name||users.some(u=>u.name===name)){alert('이름을 입력하거나 이미 존재합니다.');return}
+      try{await addDoc(collection(db,'users'),{name,password:'0000'});await waitForPendingWrites(db);await addLog(`관리자가 ${name} 사용자를 추가했습니다.`);document.getElementById('new-user-name').value=''}catch(err){alert('사용자 추가 실패')}})
+    document.getElementById('user-list').addEventListener('click',async(e)=>{if(e.target.classList.contains('delete-user-btn')){const id=e.target.dataset.id,name=e.target.dataset.name;if(confirm(`${name} 사용자를 삭제하시겠습니까?`)){await deleteDoc(doc(db,'users',id));await waitForPendingWrites(db);await addLog(`관리자가 ${name} 사용자를 삭제했습니다.`)}}});
+
+    document.getElementById('user-login-form').addEventListener('submit',async(e)=>{e.preventDefault();const name=document.getElementById('user-name').value.trim();const pw=document.getElementById('user-pw').value;if(!name||!pw){alert('이름과 비밀번호를 입력해주세요.');return}
+      try{const qs=await getDocs(query(collection(db,'users'),where('name','==',name)));if(qs.empty){alert(`'${name}' 사용자를 찾을 수 없습니다.`);return}
+        const u=qs.docs[0],data=u.data();if(data.password===pw){currentUser={id:u.id,...data};sessionStorage.setItem('currentUser',JSON.stringify(currentUser));document.getElementById('user-name').value='';document.getElementById('user-pw').value='';if(pw==='0000'){showScreen('passwordChange')}else{showScreen('user');bindUser(currentUser.id);renderUserPage()}}else{alert('비밀번호가 일치하지 않습니다.')}}catch(err){alert('로그인 오류: '+err.message)}});
+
+    document.getElementById('password-change-form').addEventListener('submit',async(e)=>{e.preventDefault();const newPw=document.getElementById('new-pw').value;const confirmPw=document.getElementById('confirm-new-pw').value;if(newPw!==confirmPw){alert('비밀번호가 일치하지 않습니다.');return}if(newPw.length<4){alert('비밀번호는 4자 이상이어야 합니다.');return}
+      try{const uid=currentUser.id;updateDoc(doc(db,'users',uid),{password:newPw}).then(()=>waitForPendingWrites(db));toast('변경이 완료 되었습니다.');currentUser=null;sessionStorage.removeItem('currentUser');showScreen('home')}catch(err){alert('비밀번호 변경 실패')}});
+
+    const renderUserPage=()=>{renderUserCalendar();renderMyRequests()};
+
+    const renderUserCalendar=()=>{const next=new Date();next.setMonth(next.getMonth()+1);const y=next.getFullYear(),m=next.getMonth();document.getElementById('user-calendar-title').textContent=`${y}년 ${m+1}월 휴가 신청`;
+      const first=new Date(y,m,1).getDay();const last=new Date(y,m+1,0).getDate();const cal=document.getElementById('user-calendar');cal.innerHTML='';
+      for(let i=0;i<first;i++){const f=document.createElement('div');f.className='calendar-day other-month';cal.appendChild(f)}
+      const today=new Date();
+      for(let d=1;d<=last;d++){const ds=`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;const cell=document.createElement('div');cell.className='calendar-day';const head=document.createElement('div');head.className='day-head';head.innerHTML=`<span class="day-num">${d}</span>`;cell.appendChild(head);
+        const myReq=vacationRequests.find(r=>currentUser&&r.userId===currentUser.id&&r.date===ds);const dateObj=new Date(y,m,d);
+        if(dateObj<today){cell.classList.add('other-month')}else if(!myReq){cell.addEventListener('click',()=>openRequestModal(ds))}else{const wrap=document.createElement('div');wrap.className='names-wrap';let cls='chip-orange',txt='대기';if(myReq.status==='approved'){cls='chip-blue';txt='승인'}if(myReq.status==='rejected'){cls='chip-red';txt='반려'}const chip=document.createElement('div');chip.className=`chip ${cls}`;chip.innerHTML=`<span class="chip-dot"></span><span>${txt}</span>`;wrap.appendChild(chip);cell.appendChild(wrap)}
+        cal.appendChild(cell)}};
+
+    const openRequestModal=(dateStr)=>{pendingDate=dateStr;document.getElementById('request-date-label').textContent=dateStr;document.getElementById('request-reason-select').value='개인 사유';showPopup('request')};
+    document.getElementById('request-cancel').addEventListener('click',()=>hidePopup('request'));
+    document.getElementById('request-submit').addEventListener('click',submitRequest);
+
+    async function submitRequest(){
+      const reason=document.getElementById('request-reason-select').value;const dateStr=pendingDate;if(!currentUser||!dateStr){hidePopup('request');return}
+      const tempId='tmp_'+Math.random().toString(36).slice(2);const nowMs=Date.now();
+      const tmp={id:tempId,userId:currentUser.id,userName:currentUser.name,date:dateStr,reason,status:'pending',createdAtMs:nowMs,clientTs:nowMs};
+      vacationRequests.push(tmp);scheduleRender(()=>{renderUserCalendar();renderMyRequests()});hidePopup('request');
+      try{
+        const ref=await addDoc(collection(db,'vacationRequests'),{userId:currentUser.id,userName:currentUser.name,date:dateStr,reason,status:'pending',timestamp:serverTimestamp(),createdAt:serverTimestamp(),createdAtMs:nowMs});
+        await waitForPendingWrites(db);
+        const idx=vacationRequests.findIndex(r=>r.id===tempId);if(idx>-1){vacationRequests[idx].id=ref.id}
+        await addLog(`${currentUser.name}님이 ${dateStr} 휴가를 신청했습니다.`);
+      }catch(err){vacationRequests=vacationRequests.filter(r=>r.id!==tempId);scheduleRender(()=>{renderUserCalendar();renderMyRequests()});alert('신청 실패: '+err.message)}
+    }
+
+    const renderMyRequests=()=>{const box=document.getElementById('my-requests');box.innerHTML='';const mine=vacationRequests.filter(r=>currentUser&&r.userId===currentUser.id).sort((a,b)=>new Date(b.date)-new Date(a.date));
+      if(!mine.length){box.innerHTML='<p class="text-gray-500 text-center py-4">신청 내역이 없습니다.</p>';return}
+      mine.forEach(req=>{const sc=req.status==='approved'?'status-approved':req.status==='rejected'?'status-rejected':'status-pending';const st=req.status==='approved'?'승인 완료':req.status==='rejected'?'반려':'승인 대기';const row=document.createElement('div');row.className='p-3.5 border border-gray-200 rounded-lg';row.innerHTML=`<p class="font-bold text-gray-800">${req.date} <span class="text-sm font-normal text-gray-500">(${req.reason})</span></p><p class="${sc} mt-1">${st}${req.status==='rejected'?` <span class="text-sm font-normal text-gray-600">(${req.rejectionReason||''})</span>`:''}</p>`;box.appendChild(row)})};
+
+    const checkSession=()=>{const s=sessionStorage.getItem('currentUser');if(s){currentUser=JSON.parse(s);showScreen('user');bindUser(currentUser.id);renderUserPage()}else{showScreen('home')}};checkSession();
+  </script>
+</body>
+</html>
