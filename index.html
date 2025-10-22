@@ -604,19 +604,39 @@
       const name=document.getElementById('user-name').value.trim();
       const pw=document.getElementById('user-pw').value;
       if(!name||!pw){ alert('이름과 비밀번호를 입력해주세요.'); return; }
+      
+      // ================== [수정된 부분] ==================
       try{
-        const q = query(ref(db,'users'), orderByChild('name'), equalTo(name));
-        const snap = await get(q);
-        if(!snap.exists()){ alert(`'${name}' 사용자를 찾을 수 없습니다.`); return; }
-        const [id,data] = Object.entries(snap.val())[0];
-        if(data.password === pw){
-          currentUser={id, ...data};
+        // [수정] 쿼리 대신 전체 사용자를 가져와서 JS에서 필터링 (인덱스 오류 회피)
+        const usersRef = ref(db, 'users');
+        const snap = await get(usersRef); 
+        if (!snap.exists()) { alert('사용자 데이터를 찾을 수 없습니다.'); return; }
+        
+        const allUsers = snap.val();
+        let foundUser = null;
+        let foundId = null;
+
+        // JS에서 직접 이름으로 사용자 검색
+        for (const id in allUsers) {
+            if (allUsers[id].name === name) {
+                foundUser = allUsers[id];
+                foundId = id;
+                break;
+            }
+        }
+
+        if (!foundUser) { alert(`'${name}' 사용자를 찾을 수 없습니다.`); return; }
+        
+        // 사용자를 찾은 후, 기존 로직 수행
+        if(foundUser.password === pw){
+          currentUser={id: foundId, ...foundUser};
           sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
           document.getElementById('user-name').value=''; document.getElementById('user-pw').value='';
           if(pw==='0000'){ showScreen('passwordChange'); }
           else{ showScreen('user'); bindUser(currentUser.id); renderUserPage(); }
         }else{ alert('비밀번호가 일치하지 않습니다.'); }
       }catch(err){ alert('로그인 오류: '+err.message); }
+      // ================== [수정 끝] ==================
     });
 
     document.getElementById('password-change-form').addEventListener('submit', async (e)=>{
