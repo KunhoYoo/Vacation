@@ -6,9 +6,9 @@
   <title>MBC 기재실 휴가 종합</title>
   <script src="https://cdn.tailwindcss.com"></script>
 
-  <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js" crossorigin>
-  <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js" crossorigin>
-  
+  <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js" crossorigin>
+  <link rel="preload" as="script" href="https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js" crossorigin>
+
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
   
   <style>
@@ -149,7 +149,7 @@
       z-index:0;
     }
     
-    /* [DESIGN] 3. 칩 UI: 상태 표시 */
+    /* [DESIGN] 3. 칩 UI: 상태 표시 (기존 칩 모양으로 변경) */
     .chip{
       display:inline-flex;
       align-items:center;
@@ -260,7 +260,7 @@
           <div class="space-y-6 lg:col-span-1 xl:col-span-1">
             <div class="card p-6">
               <h3 class="font-extrabold text-lg pb-3 border-b border-gray-200 mb-4">사용자 관리</h3>
-              <form id="add-user-form" class="flex gap-2">
+              <form id="add-user-form" class="flex gap-2 mt-4">
                 <input id="new-user-name" class="input flex-grow" placeholder="사용자 이름" required>
                 <button class="btn btn-nonwrap">추가</button>
               </form>
@@ -345,12 +345,13 @@
   </div>
 
   <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
     import {
-      getFirestore, collection, addDoc, getDocs, onSnapshot, doc, updateDoc, deleteDoc,
-      query, where, serverTimestamp, orderBy, enableIndexedDbPersistence, waitForPendingWrites
-    } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+      getDatabase, ref, push, set, update, remove, onValue, off, get,
+      query, orderByChild, equalTo, startAt, endAt, serverTimestamp
+    } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-database.js";
 
+    // Firebase 설정 (그대로 사용)
     const firebaseConfig = {
       apiKey:"AIzaSyACkd1QzPgDnmRz3b206e4IiePiS55keio",
       authDomain:"mbc-ingest.firebaseapp.com",
@@ -361,16 +362,15 @@
       appId:"1:700019516:web:09f8b929973059316ea439"
     };
     const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app);
-    enableIndexedDbPersistence(db).catch(()=>{});
+    const db  = getDatabase(app);
 
+    /* ======= 기존 전역/유틸 그대로 ======= */
     let currentAdminDate=new Date();
     let currentUser=null;
     let users=[]; let vacationRequests=[]; let pendingDate=null;
     let unsubUsers=null, unsubReqAll=null, unsubReqMine=null; let boundFor=null;
 
     const scheduleRender=(()=>{let t=null;return(fn)=>{if(t)return;t=setTimeout(()=>{t=null;try{fn()}catch(e){console.error(e)}},120)}})();
-    const addLog=async(msg)=>{try{await addDoc(collection(db,'logs'),{message:msg,timestamp:serverTimestamp()})}catch(e){}};
     const compactName=(n)=>{if(!n)return'';const m=3;return n.length>m?n.slice(0,m)+'…':n};
     const toast=(m)=>{const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1600)};
     const banner=(m)=>{const b=document.getElementById('applicant-inline-feedback');if(!b)return;b.textContent=m;b.classList.add('show');setTimeout(()=>b.classList.remove('show'),1400)};
@@ -391,79 +391,142 @@
 
     const unbindAll=()=>{[unsubUsers,unsubReqAll,unsubReqMine].forEach(u=>{try{u&&u()}catch(e){}});unsubUsers=unsubReqAll=unsubReqMine=null;boundFor=null};
 
+    const addLog = async (message) => {
+      try { await set(push(ref(db,'logs')), { message, timestamp: serverTimestamp() }); } catch(e){}
+    };
+
+    /* ======= 관리자: 현재 월만 실시간 구독 ======= */
     function bindAdminRequests() {
-      if (unsubReqAll) unsubReqAll(); 
+      if (unsubReqAll) unsubReqAll();
 
       const y = currentAdminDate.getFullYear(), m = currentAdminDate.getMonth();
-      const startDate = new Date(y, m, 1);
-      const endDate = new Date(y, m + 1, 0); 
-
+      const endDate = new Date(y, m + 1, 0);
       const startDateStr = `${y}-${String(m + 1).padStart(2, '0')}-01`;
-      const endDateStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
+      const endDateStr   = `${y}-${String(m + 1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
 
-      const q = query(
-        collection(db, 'vacationRequests'),
-        where('date', '>=', startDateStr),
-        where('date', '<=', endDateStr)
+      const qv = query(
+        ref(db,'vacationRequests'),
+        orderByChild('date'),
+        startAt(startDateStr),
+        endAt(endDateStr)
       );
 
-      unsubReqAll = onSnapshot(q, (snap) => {
-        vacationRequests = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        
-        scheduleRender(() => {
-          renderAdminCalendar(); 
-
+      const handler = (snap)=>{
+        const val = snap.val() || {};
+        vacationRequests = Object.entries(val).map(([id,v])=>({id,...v}));
+        scheduleRender(()=> {
+          renderAdminCalendar();
           const popup = popups.applicantList;
           if (popup && !popup.classList.contains('hidden')) {
             const titleEl = document.getElementById('applicant-list-title');
-            const dateStr = titleEl.textContent.split(' ')[0]; 
-            if (dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-              openApplicantList(dateStr); 
-            }
+            const dateStr = titleEl.textContent.split(' ')[0];
+            if (dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) openApplicantList(dateStr);
           }
         });
-      }, (error) => {
-        console.error("월별 데이터 수신 오류: ", error);
-        alert("데이터 로딩에 실패했습니다. Firestore 'date' 필드 인덱스가 필요할 수 있습니다 (콘솔 로그 확인).");
-      });
+      };
+      onValue(qv, handler);
+      unsubReqAll = ()=> off(qv, 'value', handler);
     }
-    
-    const bindAdmin=()=>{if(boundFor==='admin')return;unbindAll();
-      unsubUsers=onSnapshot(collection(db,'users'),(snap)=>{users=snap.docs.map(d=>({id:d.id,...d.data()}));const list=document.getElementById('user-list');if(!list)return;list.innerHTML='';users.forEach(u=>{const row=document.createElement('div');row.className='flex items-center justify-between py-2.5';row.innerHTML=`<span class="text-gray-700">${u.name}</span><button data-id="${u.id}" data-name="${u.name}" class="text-red-500 text-xs font-semibold hover:underline delete-user-btn">삭제</button>`;list.appendChild(row)})});
-      
-      bindAdminRequests(); 
-      boundFor='admin'};
 
-    const bindUser=(uid)=>{if(boundFor==='user'&&unsubReqMine)return;unbindAll();
-      unsubReqMine=onSnapshot(query(collection(db,'vacationRequests'),where('userId','==',uid)),(snap)=>{vacationRequests=snap.docs.map(d=>({id:d.id,...d.data()}));scheduleRender(()=>{renderUserCalendar();renderMyRequests()})});boundFor='user'};
+    const bindAdmin=()=>{ if(boundFor==='admin')return; unbindAll();
 
-    document.getElementById('admin-login-form').addEventListener('submit',(e)=>{e.preventDefault();const id=document.getElementById('admin-id').value.trim();const pw=document.getElementById('admin-pw').value;if(id==='admin'&&pw==='dlgmdfyd890!'){hidePopup('adminLogin');showScreen('admin');
-      renderAdminCalendar(); 
-      bindAdmin(); 
-    }else{alert('아이디 또는 비밀번호가 일치하지 않습니다.')}});
+      // 사용자 목록 리스너
+      const rUsers = ref(db,'users');
+      const hUsers = (snap)=>{
+        const val=snap.val()||{};
+        users = Object.entries(val).map(([id,v])=>({id,...v}));
+        const list=document.getElementById('user-list'); if(!list) return;
+        list.innerHTML='';
+        users.forEach(u=>{
+          const row=document.createElement('div');
+          // [index.html] 디자인 적용: py-2.5, text-gray-700, font-semibold
+          row.className='flex items-center justify-between py-2.5';
+          row.innerHTML=`<span class="text-gray-700">${u.name}</span><button data-id="${u.id}" data-name="${u.name}" class="text-red-500 text-xs font-semibold hover:underline delete-user-btn">삭제</button>`;
+          list.appendChild(row);
+        });
+      };
+      onValue(rUsers,hUsers);
+      unsubUsers = ()=> off(rUsers,'value',hUsers);
 
-    const sortKey=(r)=> Number(r.createdAtMs ?? r.clientTs ?? (r.timestamp&&r.timestamp.toMillis&&r.timestamp.toMillis()) ?? 0);
+      bindAdminRequests();
+      boundFor='admin';
+    };
 
-    const renderAdminCalendar=()=>{const y=currentAdminDate.getFullYear(),m=currentAdminDate.getMonth();document.getElementById('admin-calendar-title').textContent=`${y}년 ${m+1}월`;const first=new Date(y,m,1).getDay();const last=new Date(y,m+1,0).getDate();const cont=document.getElementById('admin-calendar');cont.innerHTML='';for(let i=0;i<first;i++){const f=document.createElement('div');f.className='calendar-day other-month';cont.appendChild(f)}
-      for(let d=1;d<=last;d++){const ds=`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const bindUser=(uid)=>{ if(boundFor==='user'&&unsubReqMine) return; unbindAll();
+      const qMine = query(ref(db,'vacationRequests'), orderByChild('userId'), equalTo(uid));
+      const hMine = (snap)=>{
+        const val=snap.val()||{};
+        vacationRequests = Object.entries(val).map(([id,v])=>({id,...v}));
+        scheduleRender(()=>{ renderUserCalendar(); renderMyRequests(); });
+      };
+      onValue(qMine, hMine);
+      unsubReqMine = ()=> off(qMine,'value',hMine);
+      boundFor='user';
+    };
+
+    /* ======= 로그인/권한 ======= */
+    document.getElementById('admin-login-form').addEventListener('submit',(e)=>{
+      e.preventDefault();
+      const id=document.getElementById('admin-id').value.trim();
+      const pw=document.getElementById('admin-pw').value;
+      if(id==='admin'&&pw==='dlgmdfyd890!'){
+        hidePopup('adminLogin'); showScreen('admin');
+        renderAdminCalendar(); bindAdmin();
+      }else{ alert('아이디 또는 비밀번호가 일치하지 않습니다.'); }
+    });
+
+    const sortKey=(r)=> Number(r.createdAtMs ?? r.clientTs ?? r.timestamp ?? 0);
+
+    /* ======= 달력 렌더(원본 유지) ======= */
+    const renderAdminCalendar=()=>{const y=currentAdminDate.getFullYear(),m=currentAdminDate.getMonth();
+      document.getElementById('admin-calendar-title').textContent=`${y}년 ${m+1}월`;
+      const first=new Date(y,m,1).getDay();const last=new Date(y,m+1,0).getDate();
+      const cont=document.getElementById('admin-calendar');cont.innerHTML='';
+      for(let i=0;i<first;i++){const f=document.createElement('div');f.className='calendar-day other-month';cont.appendChild(f)}
+      for(let d=1;d<=last;d++){
+        const ds=`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
         const dayReqs=vacationRequests.filter(r=>r.date===ds).sort((a,b)=>sortKey(a)-sortKey(b));
         const cell=document.createElement('div');cell.className='calendar-day';
         const head=document.createElement('div');head.className='day-head';head.innerHTML=`<span class="day-num">${d}</span><span></span>`;cell.appendChild(head);
-        if(dayReqs.length){const wrap=document.createElement('div');wrap.className='names-wrap';const maxShow=4;
-          dayReqs.slice(0,maxShow).forEach(req=>{if(req.status==='rejected')return;const chip=document.createElement('div');const cls=(req.status==='approved')?'chip-blue':'chip-orange';chip.className=`chip ${cls}`;chip.title=`${req.userName} (${req.reason})`;chip.innerHTML=`<span class="chip-dot"></span><span class="truncate">${compactName(req.userName)}</span>`;wrap.appendChild(chip)});
+        if(dayReqs.length){
+          const wrap=document.createElement('div');wrap.className='names-wrap';
+          const maxShow=4;
+          dayReqs.slice(0,maxShow).forEach(req=>{
+            if(req.status==='rejected')return;
+            const chip=document.createElement('div');
+            const cls=(req.status==='approved')?'chip-blue':'chip-orange';
+            chip.className=`chip ${cls}`;chip.title=`${req.userName} (${req.reason})`;
+            chip.innerHTML=`<span class="chip-dot"></span><span class="truncate">${compactName(req.userName)}</span>`;
+            wrap.appendChild(chip);
+          });
           const shown=dayReqs.filter(r=>r.status!=='rejected').length;
           if(shown>maxShow){const more=document.createElement('div');more.className='chip chip-more';more.textContent=`+${shown-maxShow}`;wrap.appendChild(more)}
-          if(wrap.children.length)cell.appendChild(wrap);cell.addEventListener('click',()=>openApplicantList(ds))}
-        cont.appendChild(cell)}};
+          if(wrap.children.length)cell.appendChild(wrap);
+          cell.addEventListener('click',()=>openApplicantList(ds));
+        }
+        cont.appendChild(cell);
+      }
+    };
 
-    document.getElementById('admin-prev-month').addEventListener('click',()=>{currentAdminDate.setMonth(currentAdminDate.getMonth()-1);renderAdminCalendar();bindAdminRequests()});
-    document.getElementById('admin-next-month').addEventListener('click',()=>{currentAdminDate.setMonth(currentAdminDate.getMonth()+1);renderAdminCalendar();bindAdminRequests()});
+    document.getElementById('admin-prev-month').addEventListener('click',()=>{
+      currentAdminDate.setMonth(currentAdminDate.getMonth()-1);
+      renderAdminCalendar(); bindAdminRequests();
+    });
+    document.getElementById('admin-next-month').addEventListener('click',()=>{
+      currentAdminDate.setMonth(currentAdminDate.getMonth()+1);
+      renderAdminCalendar(); bindAdminRequests();
+    });
 
-    const openApplicantList=(dateStr)=>{document.getElementById('applicant-list-title').textContent=`${dateStr} 신청자 목록`;const box=document.getElementById('applicant-list-content');box.innerHTML='';
-      const reqs=vacationRequests.filter(r=>r.date===dateStr).sort((a,b)=>sortKey(a)-sortKey(b)); 
+    const openApplicantList=(dateStr)=>{
+      document.getElementById('applicant-list-title').textContent=`${dateStr} 신청자 목록`;
+      const box=document.getElementById('applicant-list-content'); box.innerHTML='';
+      const reqs=vacationRequests.filter(r=>r.date===dateStr).sort((a,b)=>sortKey(a)-sortKey(b));
       if(!reqs.length){box.innerHTML='<p class="text-gray-500 text-center py-4">신청자가 없습니다.</p>';showPopup('applicantList');return}
-      reqs.forEach(req=>{const stClass=req.status==='approved'?'status-approved':req.status==='rejected'?'status-rejected':'status-pending';const stText=req.status==='approved'?'승인':req.status==='rejected'?'반려':'대기';
+      reqs.forEach(req=>{
+        const stClass=req.status==='approved'?'status-approved':req.status==='rejected'?'status-rejected':'status-pending';
+        const stText=req.status==='approved'?'승인':req.status==='rejected'?'반려':'대기';
         const row=document.createElement('div');row.className='p-3 border border-gray-200 rounded-lg mb-2';
+        // [index.html] 디자인 적용: gap-3, text-gray-800, text-sm, py-1.5, text-xs
         row.innerHTML=`<div class="flex flex-col gap-3">
             <div class="flex items-center justify-between">
               <p class="font-bold text-gray-800">${req.userName} <span class="text-sm font-normal text-gray-500">(${req.reason})</span></p>
@@ -481,78 +544,166 @@
               </select>
               <button data-id="${req.id}" data-date="${req.date}" data-name="${req.userName}" class="btn-ghost px-3 py-2 rounded-xl text-sm reject-btn">반려</button>
             </div>
-        </div>`;box.appendChild(row)});
-      showPopup('applicantList')};
+        </div>`;
+        box.appendChild(row);
+      });
+      showPopup('applicantList');
+    };
 
-    document.getElementById('applicant-list-content').addEventListener('click',async(e)=>{
-      const t=e.target;const id=t.dataset.id,date=t.dataset.date,uname=t.dataset.name;
-      if(t.classList.contains('edit-btn')){const ctl=t.closest('.flex.flex-col').querySelector('.edit-controls');if(ctl)ctl.classList.remove('hidden');t.classList.add('hidden');return}
-      
+    document.getElementById('applicant-list-content').addEventListener('click', async (e)=>{
+      const t=e.target; const id=t.dataset.id, date=t.dataset.date, uname=t.dataset.name;
+      if(t.classList.contains('edit-btn')){
+        const ctl=t.closest('.flex.flex-col').querySelector('.edit-controls');
+        if(ctl) ctl.classList.remove('hidden'); 
+        t.classList.add('hidden'); // [index.html] 기능: 수정 버튼 숨기기
+        return;
+      }
       if(t.classList.contains('approve-btn')){
         try{
-          await updateDoc(doc(db,'vacationRequests',id),{status:'approved',rejectionReason:null});
-          await waitForPendingWrites(db);
+          await update(ref(db,`vacationRequests/${id}`), { status:'approved', rejectionReason:null });
           await addLog(`관리자가 ${uname}님의 ${date} 휴가를 승인했습니다.`);
           toast('승인되었습니다.'); banner('승인되었습니다.');
-        }catch(err){
-          alert('승인 실패: '+err.message)
-        }
+        }catch(err){ alert('승인 실패: '+err.message); }
       }
       if(t.classList.contains('reject-btn')){
-        const sel=t.parentElement.querySelector('.reject-reason');const reason=sel?.value||'';if(!reason){alert('반려 사유를 선택해주세요.');return}
+        const sel=t.parentElement.querySelector('.reject-reason'); const reason=sel?.value||'';
+        if(!reason){ alert('반려 사유를 선택해주세요.'); return; }
         try{
-          await updateDoc(doc(db,'vacationRequests',id),{status:'rejected',rejectionReason:reason});
-          await waitForPendingWrites(db);
+          await update(ref(db,`vacationRequests/${id}`), { status:'rejected', rejectionReason:reason });
           await addLog(`관리자가 ${uname}님의 ${date} 휴가를 반려했습니다. (사유: ${reason})`);
           toast('반려되었습니다.'); banner('반려되었습니다.');
-        }catch(err){
-          alert('반려 실패: '+err.message)
+        }catch(err){ alert('반려 실패: '+err.message); }
+      }
+    });
+
+    /* ======= 사용자 추가/삭제 ======= */
+    document.getElementById('add-user-form').addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const name=document.getElementById('new-user-name').value.trim();
+      if(!name||users.some(u=>u.name===name)){ alert('이름을 입력하거나 이미 존재합니다.'); return; }
+      try{
+        await set(push(ref(db,'users')), { name, password:'0000' });
+        await addLog(`관리자가 ${name} 사용자를 추가했습니다.`);
+        document.getElementById('new-user-name').value='';
+      }catch(err){ alert('사용자 추가 실패'); }
+    });
+
+    document.getElementById('user-list').addEventListener('click', async (e)=>{
+      if(e.target.classList.contains('delete-user-btn')){
+        const id=e.target.dataset.id, name=e.target.dataset.name;
+        if(confirm(`${name} 사용자를 삭제하시겠습니까?`)){
+          await remove(ref(db,`users/${id}`));
+          await addLog(`관리자가 ${name} 사용자를 삭제했습니다.`);
         }
       }
     });
 
-    document.getElementById('add-user-form').addEventListener('submit',async(e)=>{e.preventDefault();const name=document.getElementById('new-user-name').value.trim();if(!name||users.some(u=>u.name===name)){alert('이름을 입력하거나 이미 존재합니다.');return}
-      try{await addDoc(collection(db,'users'),{name,password:'0000'});await waitForPendingWrites(db);await addLog(`관리자가 ${name} 사용자를 추가했습니다.`);document.getElementById('new-user-name').value=''}catch(err){alert('사용자 추가 실패')}})
-    document.getElementById('user-list').addEventListener('click',async(e)=>{if(e.target.classList.contains('delete-user-btn')){const id=e.target.dataset.id,name=e.target.dataset.name;if(confirm(`${name} 사용자를 삭제하시겠습니까?`)){await deleteDoc(doc(db,'users',id));await waitForPendingWrites(db);await addLog(`관리자가 ${name} 사용자를 삭제했습니다.`)}}});
+    /* ======= 사용자 로그인/비번 변경 ======= */
+    document.getElementById('user-login-form').addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const name=document.getElementById('user-name').value.trim();
+      const pw=document.getElementById('user-pw').value;
+      if(!name||!pw){ alert('이름과 비밀번호를 입력해주세요.'); return; }
+      try{
+        const q = query(ref(db,'users'), orderByChild('name'), equalTo(name));
+        const snap = await get(q);
+        if(!snap.exists()){ alert(`'${name}' 사용자를 찾을 수 없습니다.`); return; }
+        const [id,data] = Object.entries(snap.val())[0];
+        if(data.password === pw){
+          currentUser={id, ...data};
+          sessionStorage.setItem('currentUser', JSON.stringify(currentUser));
+          document.getElementById('user-name').value=''; document.getElementById('user-pw').value='';
+          if(pw==='0000'){ showScreen('passwordChange'); }
+          else{ showScreen('user'); bindUser(currentUser.id); renderUserPage(); }
+        }else{ alert('비밀번호가 일치하지 않습니다.'); }
+      }catch(err){ alert('로그인 오류: '+err.message); }
+    });
 
-    document.getElementById('user-login-form').addEventListener('submit',async(e)=>{e.preventDefault();const name=document.getElementById('user-name').value.trim();const pw=document.getElementById('user-pw').value;if(!name||!pw){alert('이름과 비밀번호를 입력해주세요.');return}
-      try{const qs=await getDocs(query(collection(db,'users'),where('name','==',name)));if(qs.empty){alert(`'${name}' 사용자를 찾을 수 없습니다.`);return}
-        const u=qs.docs[0],data=u.data();if(data.password===pw){currentUser={id:u.id,...data};sessionStorage.setItem('currentUser',JSON.stringify(currentUser));document.getElementById('user-name').value='';document.getElementById('user-pw').value='';if(pw==='0000'){showScreen('passwordChange')}else{showScreen('user');bindUser(currentUser.id);renderUserPage()}}else{alert('비밀번호가 일치하지 않습니다.')}}catch(err){alert('로그인 오류: '+err.message)}});
+    document.getElementById('password-change-form').addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const newPw=document.getElementById('new-pw').value;
+      const confirmPw=document.getElementById('confirm-new-pw').value;
+      if(newPw!==confirmPw){ alert('비밀번호가 일치하지 않습니다.'); return; }
+      if(newPw.length<4){ alert('비밀번호는 4자 이상이어야 합니다.'); return; } // [index.html] 기능: 4자 유효성 검사
+      try{
+        const uid=currentUser.id;
+        await update(ref(db,`users/${uid}`), { password:newPw });
+        toast('변경이 완료 되었습니다.');
+        currentUser=null; sessionStorage.removeItem('currentUser'); showScreen('home');
+      }catch(err){ alert('비밀번호 변경 실패'); }
+    });
 
-    document.getElementById('password-change-form').addEventListener('submit',async(e)=>{e.preventDefault();const newPw=document.getElementById('new-pw').value;const confirmPw=document.getElementById('confirm-new-pw').value;if(newPw!==confirmPw){alert('비밀번호가 일치하지 않습니다.');return}if(newPw.length<4){alert('비밀번호는 4자 이상이어야 합니다.');return}
-      try{const uid=currentUser.id;updateDoc(doc(db,'users',uid),{password:newPw}).then(()=>waitForPendingWrites(db));toast('변경이 완료 되었습니다.');currentUser=null;sessionStorage.removeItem('currentUser');showScreen('home')}catch(err){alert('비밀번호 변경 실패')}});
+    /* ======= 사용자 화면 ======= */
+    const renderUserPage=()=>{ renderUserCalendar(); renderMyRequests(); };
 
-    const renderUserPage=()=>{renderUserCalendar();renderMyRequests()};
-
-    const renderUserCalendar=()=>{const next=new Date();next.setMonth(next.getMonth()+1);const y=next.getFullYear(),m=next.getMonth();document.getElementById('user-calendar-title').textContent=`${y}년 ${m+1}월 휴가 신청`;
-      const first=new Date(y,m,1).getDay();const last=new Date(y,m+1,0).getDate();const cal=document.getElementById('user-calendar');cal.innerHTML='';
+    const renderUserCalendar=()=>{const next=new Date();next.setMonth(next.getMonth()+1);
+      const y=next.getFullYear(),m=next.getMonth();
+      document.getElementById('user-calendar-title').textContent=`${y}년 ${m+1}월 휴가 신청`;
+      const first=new Date(y,m,1).getDay();const last=new Date(y,m+1,0).getDate();
+      const cal=document.getElementById('user-calendar');cal.innerHTML='';
       for(let i=0;i<first;i++){const f=document.createElement('div');f.className='calendar-day other-month';cal.appendChild(f)}
       const today=new Date();
-      for(let d=1;d<=last;d++){const ds=`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;const cell=document.createElement('div');cell.className='calendar-day';const head=document.createElement('div');head.className='day-head';head.innerHTML=`<span class="day-num">${d}</span>`;cell.appendChild(head);
+      for(let d=1;d<=last;d++){
+        const ds=`${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+        const cell=document.createElement('div');cell.className='calendar-day';
+        const head=document.createElement('div');head.className='day-head';head.innerHTML=`<span class="day-num">${d}</span>`;cell.appendChild(head);
         const myReq=vacationRequests.find(r=>currentUser&&r.userId===currentUser.id&&r.date===ds);const dateObj=new Date(y,m,d);
-        if(dateObj<today){cell.classList.add('other-month')}else if(!myReq){cell.addEventListener('click',()=>openRequestModal(ds))}else{const wrap=document.createElement('div');wrap.className='names-wrap';let cls='chip-orange',txt='대기';if(myReq.status==='approved'){cls='chip-blue';txt='승인'}if(myReq.status==='rejected'){cls='chip-red';txt='반려'}const chip=document.createElement('div');chip.className=`chip ${cls}`;chip.innerHTML=`<span class="chip-dot"></span><span>${txt}</span>`;wrap.appendChild(chip);cell.appendChild(wrap)}
-        cal.appendChild(cell)}};
+        if(dateObj<today){cell.classList.add('other-month')}
+        else if(!myReq){cell.addEventListener('click',()=>openRequestModal(ds))}
+        else{
+          const wrap=document.createElement('div');wrap.className='names-wrap';
+          let cls='chip-orange',txt='대기';
+          if(myReq.status==='approved'){cls='chip-blue';txt='승인'}
+          if(myReq.status==='rejected'){cls='chip-red';txt='반려'}
+          const chip=document.createElement('div');chip.className=`chip ${cls}`;chip.innerHTML=`<span class="chip-dot"></span><span>${txt}</span>`;
+          wrap.appendChild(chip);cell.appendChild(wrap);
+        }
+        cal.appendChild(cell);
+      }
+    };
 
     const openRequestModal=(dateStr)=>{pendingDate=dateStr;document.getElementById('request-date-label').textContent=dateStr;document.getElementById('request-reason-select').value='개인 사유';showPopup('request')};
     document.getElementById('request-cancel').addEventListener('click',()=>hidePopup('request'));
-    document.getElementById('request-submit').addEventListener('click',submitRequest);
+    document.getElementById('request-submit').addEventListener('click', submitRequest);
 
     async function submitRequest(){
-      const reason=document.getElementById('request-reason-select').value;const dateStr=pendingDate;if(!currentUser||!dateStr){hidePopup('request');return}
-      const tempId='tmp_'+Math.random().toString(36).slice(2);const nowMs=Date.now();
+      const reason=document.getElementById('request-reason-select').value;
+      const dateStr=pendingDate;
+      if(!currentUser||!dateStr){ hidePopup('request'); return; }
+      const tempId='tmp_'+Math.random().toString(36).slice(2); const nowMs=Date.now();
       const tmp={id:tempId,userId:currentUser.id,userName:currentUser.name,date:dateStr,reason,status:'pending',createdAtMs:nowMs,clientTs:nowMs};
-      vacationRequests.push(tmp);scheduleRender(()=>{renderUserCalendar();renderMyRequests()});hidePopup('request');
+      vacationRequests.push(tmp); scheduleRender(()=>{renderUserCalendar();renderMyRequests()}); hidePopup('request');
       try{
-        const ref=await addDoc(collection(db,'vacationRequests'),{userId:currentUser.id,userName:currentUser.name,date:dateStr,reason,status:'pending',timestamp:serverTimestamp(),createdAt:serverTimestamp(),createdAtMs:nowMs});
-        await waitForPendingWrites(db);
-        const idx=vacationRequests.findIndex(r=>r.id===tempId);if(idx>-1){vacationRequests[idx].id=ref.id}
+        const newRef = push(ref(db,'vacationRequests'));
+        await set(newRef, {
+          userId:currentUser.id, userName:currentUser.name,
+          date:dateStr, reason, status:'pending',
+          createdAtMs: nowMs, timestamp: serverTimestamp()
+        });
+        // key 반영
+        const idx=vacationRequests.findIndex(r=>r.id===tempId);
+        if(idx>-1) vacationRequests[idx].id = newRef.key;
         await addLog(`${currentUser.name}님이 ${dateStr} 휴가를 신청했습니다.`);
-      }catch(err){vacationRequests=vacationRequests.filter(r=>r.id!==tempId);scheduleRender(()=>{renderUserCalendar();renderMyRequests()});alert('신청 실패: '+err.message)}
+      }catch(err){
+        vacationRequests = vacationRequests.filter(r=>r.id!==tempId);
+        scheduleRender(()=>{renderUserCalendar();renderMyRequests()});
+        alert('신청 실패: '+err.message);
+      }
     }
 
-    const renderMyRequests=()=>{const box=document.getElementById('my-requests');box.innerHTML='';const mine=vacationRequests.filter(r=>currentUser&&r.userId===currentUser.id).sort((a,b)=>new Date(b.date)-new Date(a.date));
+    const renderMyRequests=()=>{const box=document.getElementById('my-requests');box.innerHTML='';
+      const mine=vacationRequests.filter(r=>currentUser&&r.userId===currentUser.id).sort((a,b)=>new Date(b.date)-new Date(a.date));
       if(!mine.length){box.innerHTML='<p class="text-gray-500 text-center py-4">신청 내역이 없습니다.</p>';return}
-      mine.forEach(req=>{const sc=req.status==='approved'?'status-approved':req.status==='rejected'?'status-rejected':'status-pending';const st=req.status==='approved'?'승인 완료':req.status==='rejected'?'반려':'승인 대기';const row=document.createElement('div');row.className='p-3.5 border border-gray-200 rounded-lg';row.innerHTML=`<p class="font-bold text-gray-800">${req.date} <span class="text-sm font-normal text-gray-500">(${req.reason})</span></p><p class="${sc} mt-1">${st}${req.status==='rejected'?` <span class="text-sm font-normal text-gray-600">(${req.rejectionReason||''})</span>`:''}</p>`;box.appendChild(row)})};
+      mine.forEach(req=>{
+        const sc=req.status==='approved'?'status-approved':req.status==='rejected'?'status-rejected':'status-pending';
+        const st=req.status==='approved'?'승인 완료':req.status==='rejected'?'반려':'승인 대기';
+        const row=document.createElement('div');
+        // [index.html] 디자인 적용: p-3.5, text-gray-800, text-sm, mt-1
+        row.className='p-3.5 border border-gray-200 rounded-lg';
+        row.innerHTML=`<p class="font-bold text-gray-800">${req.date} <span class="text-sm font-normal text-gray-500">(${req.reason})</span></p><p class="${sc} mt-1">${st}${req.status==='rejected'?` <span class="text-sm font-normal text-gray-600">(${req.rejectionReason||''})</span>`:''}</p>`;
+        box.appendChild(row);
+      });
+    };
 
     const checkSession=()=>{const s=sessionStorage.getItem('currentUser');if(s){currentUser=JSON.parse(s);showScreen('user');bindUser(currentUser.id);renderUserPage()}else{showScreen('home')}};checkSession();
   </script>
